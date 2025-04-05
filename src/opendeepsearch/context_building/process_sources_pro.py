@@ -90,7 +90,7 @@ class SourceProcessor:
             print(f"Error in content processing: {e}")
             return ""
 
-    def _update_sources_with_content(
+    async def _update_sources_with_content(
         self, 
         sources: List[dict],
         valid_sources: List[Tuple[int, dict]], 
@@ -98,6 +98,10 @@ class SourceProcessor:
         query: str
     ) -> List[dict]:
         for (i, source), html in zip(valid_sources, html_contents):
-            source['html'] = self._process_html_content(html, query)
-            # sources[i] = source
+            processed_content = self._process_html_content(html, query)
+            is_valid = await self.validate_content(processed_content)
+            if is_valid:
+                source['html'] = processed_content
+            else:
+                source['html'] = ""
         return sources

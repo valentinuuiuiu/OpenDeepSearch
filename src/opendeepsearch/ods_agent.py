@@ -70,7 +70,9 @@ class OpenDeepSearchAgent:
         self.source_processor = SourceProcessor(**source_processor_config)
 
         # Initialize LLM settings
-        self.model = model if model is not None else os.getenv("LITELLM_SEARCH_MODEL_ID", os.getenv("LITELLM_MODEL_ID", "openrouter/google/gemini-2.0-flash-001"))
+        self.planner_model = model if model is not None else os.getenv("LITELLM_SEARCH_MODEL_ID", os.getenv("LITELLM_MODEL_ID", "openrouter/google/gemini-2.0-flash-001"))
+        self.counselor_model = "gemini"
+        self.coding_model = "deepseek-coder-33b-instruct"
         self.temperature = temperature
         self.top_p = top_p
         self.system_prompt = system_prompt
@@ -139,22 +141,28 @@ class OpenDeepSearchAgent:
         Returns:
             str: An AI-generated response that answers the query based on the gathered context.
         """
-        # Get context from search results
-        context = await self.search_and_build_context(query, max_sources, pro_mode)
-        # Prepare messages for the LLM
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
-        ]
-        # Get completion from LLM
-        response = completion(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            top_p=self.top_p
-        )
+        # Check if the task is complex
+        if len(query.split()) > 50:
+            # Tackle complexity
+            subtasks = await self.tackle_complexity(query)
+            return f"Complex task detected. Subtasks:\\n{subtasks}"
+        else:
+            # Get context from search results
+            context = await self.search_and_build_context(query, max_sources, pro_mode)
+            # Prepare messages for the LLM
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": f"Context:\\n{context}\\n\\nQuestion: {query}"}
+            ]
+            # Get completion from LLM
+            response = completion(
+                model=self.coding_model,
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p
+            )
 
-        return response.choices[0].message.content
+            return response.choices[0].message.content
 
     def ask_sync(
         self,
@@ -175,5 +183,20 @@ class OpenDeepSearchAgent:
             # If there's no event loop, create a new one
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+    async def tackle_complexity(self, task: str) -> str:
+        """Breaks down a complex task into subtasks and uses specialized modes to solve them."""
+        # Use planner model to generate subtasks
+        messages = [
+            {"role": "system", "content": "Tackle Complexity: Break large, multi-step projects (e.g., building a full feature) into focused subtasks (e.g., design, implementation, documentation). Use Specialized Modes: Automatically delegate subtasks to the mode best suited for that specific piece of work, leveraging specialized capabilities for optimal results. Return the subtasks as a numbered list."},
+            {"role": "user", "content": task}
+        ]
+        response = completion(
+            model=self.coding_model,
+            messages=messages,
+            temperature=self.temperature,
+            top_p=self.top_p
+        )
+        subtasks = response.choices[0].message.content
+        return subtasks
 
         return loop.run_until_complete(self.ask(query, max_sources, pro_mode))
